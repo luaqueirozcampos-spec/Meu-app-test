@@ -12,108 +12,163 @@ function save() {
 
 const $ = (s) => document.querySelector(s);
 const byId = Object.fromEntries(PLACES.map((p) => [p.id, p]));
-const tint = (hex) => hex + "22";
-const starsText = (n) => (n ? "★".repeat(n) + "☆".repeat(5 - n) : "Não avaliado");
+const LABELS = ["", "Não curti", "Regular", "Bom", "Muito bom", "Imperdível"];
+
+function scoreHTML(id) {
+  const r = state.ratings[id];
+  return r
+    ? `<span class="score on"><span class="s">★</span> ${r},0</span>`
+    : `<span class="score">Avaliar</span>`;
+}
 
 // ---------- Mapa ----------
 const hasMap = typeof L !== "undefined";
-const map = hasMap ? L.map("map", { zoomControl: false, attributionControl: true }).setView([-2.515, -44.29], 13) : null;
-if (hasMap) {
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
-}).addTo(map);
+const map = hasMap ? L.map("map", { zoomControl: false }).setView([-2.515, -44.29], 13) : null;
+const markers = {};
 
-PLACES.forEach((p) => {
-  const icon = L.divIcon({
-    className: "", iconSize: [38, 38], iconAnchor: [19, 38],
-    html: `<div class="pin" style="background:${p.color}"><span>${p.emoji}</span></div>`,
+if (hasMap) {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 19,
+  }).addTo(map);
+
+  PLACES.forEach((p) => {
+    const icon = L.divIcon({
+      className: "", iconSize: [48, 55], iconAnchor: [24, 55],
+      html: `<div class="pin" style="--ring:${p.color}"><img src="${p.photo}" alt=""></div>`,
+    });
+    markers[p.id] = L.marker([p.lat, p.lng], { icon, riseOnHover: true })
+      .addTo(map)
+      .on("click", () => { highlight(p.id, true); openSheet(p.id); });
   });
-  L.marker([p.lat, p.lng], { icon }).addTo(map).on("click", () => openSheet(p.id));
-});
-map.fitBounds(PLACES.map((p) => [p.lat, p.lng]), { padding: [40, 40] });
+  map.fitBounds(PLACES.map((p) => [p.lat, p.lng]), { padding: [50, 50] });
 } else {
-  document.getElementById("map").innerHTML = '<div class="empty">Mapa indisponível sem internet.<br>Use a aba Lugares.</div>';
+  $("#map").innerHTML = '<p class="empty">Mapa indisponível sem internet.<br>Use a aba Lugares.</p>';
 }
 
-$("#map-chips").innerHTML = PLACES.map(
-  (p) => `<button class="chip" data-id="${p.id}">${p.emoji} ${p.name}</button>`
-).join("");
-$("#map-chips").addEventListener("click", (e) => {
-  const b = e.target.closest(".chip"); if (!b) return;
+function highlight(id, scrollCard) {
+  document.querySelectorAll(".pin.active").forEach((el) => el.classList.remove("active"));
+  const m = markers[id];
+  if (m && m.getElement()) {
+    m.getElement().querySelector(".pin").classList.add("active");
+    m.setZIndexOffset(1000);
+    Object.entries(markers).forEach(([k, mk]) => k !== id && mk.setZIndexOffset(0));
+  }
+  if (scrollCard) {
+    const card = document.querySelector(`.mini[data-id="${id}"]`);
+    if (card) card.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }
+}
+
+function renderCarousel() {
+  $("#carousel").innerHTML = PLACES.map((p) => `
+    <button class="mini" data-id="${p.id}">
+      <img src="${p.photo}" alt="${p.name}" loading="lazy">
+      <div><div class="mini-title">${p.name}</div><div class="mini-meta">${p.category} · ${scoreHTML(p.id)}</div></div>
+    </button>`).join("");
+}
+
+$("#carousel").addEventListener("click", (e) => {
+  const b = e.target.closest(".mini"); if (!b) return;
   const p = byId[b.dataset.id];
   if (map) map.flyTo([p.lat, p.lng], 16, { duration: 0.6 });
+  highlight(p.id);
   setTimeout(() => openSheet(p.id), 450);
 });
 
-// ---------- Lista ----------
-function cardHTML(p, prefix = "") {
-  const r = state.ratings[p.id];
-  const fav = state.favorite === p.id ? `<span class="heart">♥ Favorito</span>` : "";
-  return `<button class="card" data-id="${p.id}">
-    ${prefix}
-    <div class="thumb" style="background:${tint(p.color)}">${p.emoji}</div>
-    <div class="card-main">
-      <div class="card-title">${p.name}</div>
-      <div class="card-meta"><span>${p.category}</span>
-        <span style="color:${r ? "var(--star)" : "inherit"}">${starsText(r)}</span>${fav}</div>
-    </div>
-  </button>`;
+// Ao rolar o carrossel, destaca o marcador do card central
+let scrollTimer;
+$("#carousel").addEventListener("scroll", () => {
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    const box = $("#carousel").getBoundingClientRect();
+    const mid = box.left + box.width / 2;
+    let best = null, dist = Infinity;
+    document.querySelectorAll(".mini").forEach((c) => {
+      const r = c.getBoundingClientRect(); const d = Math.abs(r.left + r.width / 2 - mid);
+      if (d < dist) { dist = d; best = c.dataset.id; }
+    });
+    if (best) highlight(best);
+  }, 120);
+}, { passive: true });
+
+// ---------- Lugares ----------
+const CATS = ["Todos", ...new Set(PLACES.map((p) => p.category))];
+let filter = "Todos";
+
+function renderFilters() {
+  $("#filters").innerHTML = CATS.map(
+    (c) => `<button class="filter ${c === filter ? "on" : ""}" data-cat="${c}">${c}</button>`
+  ).join("");
 }
+$("#filters").addEventListener("click", (e) => {
+  const b = e.target.closest(".filter"); if (!b) return;
+  filter = b.dataset.cat; renderFilters(); renderList();
+});
 
 function renderList() {
-  $("#list").innerHTML = PLACES.map((p) => cardHTML(p)).join("");
+  const items = PLACES.filter((p) => filter === "Todos" || p.category === filter);
+  $("#list").innerHTML = items.map((p) => `
+    <button class="photo-card" data-id="${p.id}">
+      <div class="photo-wrap">
+        <img src="${p.photo}" alt="${p.name}" loading="lazy">
+        <span class="badge">${p.category}</span>
+        ${state.favorite === p.id ? '<span class="fav" title="Seu favorito">♥</span>' : ""}
+      </div>
+      <div class="photo-info"><h3>${p.name}</h3>${scoreHTML(p.id)}</div>
+    </button>`).join("");
 }
 
 // ---------- Ranking ----------
 // Pontuação = estrelas + 2 pontos de bônus para o favorito
-function score(p) {
-  return (state.ratings[p.id] || 0) + (state.favorite === p.id ? 2 : 0);
+const score = (p) => (state.ratings[p.id] || 0) + (state.favorite === p.id ? 2 : 0);
+
+function rowHTML(p, n) {
+  const r = state.ratings[p.id];
+  const meta = [r ? `★ ${r},0` : "Sem nota", state.favorite === p.id ? "♥ favorito" : ""].filter(Boolean).join(" · ");
+  return `<button class="row" data-id="${p.id}"><span class="rank-n">${n}</span>
+    <img src="${p.photo}" alt="" loading="lazy">
+    <div class="row-main"><div class="row-title">${p.name}</div><div class="row-meta">${meta}</div></div></button>`;
 }
 
 function renderRank() {
   const rated = PLACES.filter((p) => score(p) > 0).sort((a, b) => score(b) - score(a));
+  const unrated = PLACES.filter((p) => score(p) === 0);
   if (!rated.length) {
     $("#podium").innerHTML = "";
-    $("#rank").innerHTML = `<div class="empty">🏆<br><br>Avalie os lugares com estrelas e escolha seu favorito para montar o ranking.</div>`;
+    $("#rank").innerHTML = `<p class="empty">Avalie os lugares com estrelas e vote no seu favorito para montar o ranking.</p>` +
+      unrated.map((p) => rowHTML(p, "–")).join("");
     return;
   }
-  const order = [[1, "second"], [0, "first"], [2, "third"]];
-  $("#podium").innerHTML = order.map(([i, cls]) => {
+  $("#podium").innerHTML = [[1, "second"], [0, "first"], [2, "third"]].map(([i, cls]) => {
     const p = rated[i];
-    if (!p) return `<div></div>`;
-    return `<div class="pod ${cls}" data-id="${p.id}">
-      <div class="thumb" style="background:${tint(p.color)}">${p.emoji}</div>
-      <div class="pod-name">${p.name}</div>
-      <div class="pod-bar">${i + 1}º</div>
-    </div>`;
+    if (!p) return "<div></div>";
+    return `<div class="pod ${cls}" data-id="${p.id}"><img src="${p.photo}" alt="">
+      <div class="pod-name">${p.name}</div><div class="pod-bar">${i + 1}º</div></div>`;
   }).join("");
-  const rest = rated.slice(3);
-  const unrated = PLACES.filter((p) => score(p) === 0);
   $("#rank").innerHTML =
-    rest.map((p, i) => cardHTML(p, `<span class="rank-n">${i + 4}</span>`)).join("") +
-    (unrated.length ? `<p class="eyebrow" style="margin:10px 4px 0">Ainda não avaliados</p>` +
-      unrated.map((p) => cardHTML(p, `<span class="rank-n">–</span>`)).join("") : "");
+    rated.slice(3).map((p, i) => rowHTML(p, i + 4)).join("") +
+    (unrated.length ? `<p class="eyebrow section-label">Ainda não avaliados</p>` + unrated.map((p) => rowHTML(p, "–")).join("") : "");
 }
 
 function renderAll() {
-  renderList();
-  renderRank();
-  const n = Object.keys(state.ratings).length;
-  $("#progress").textContent = `${n}/${PLACES.length} avaliados`;
+  renderCarousel(); renderList(); renderRank();
+  $("#progress").textContent = `${Object.keys(state.ratings).length}/${PLACES.length} avaliados`;
 }
 
-// ---------- Detalhe (bottom sheet) ----------
+// ---------- Detalhe ----------
 let current = null;
 
 function openSheet(id) {
   const p = byId[id]; current = id;
-  $("#sheet-hero").style.background = `linear-gradient(160deg, ${tint(p.color)}, ${p.color}55)`;
-  $("#sheet-hero").textContent = p.emoji;
+  $("#sheet-hero").style.backgroundImage = `url("${p.photo}")`;
+  $("#sheet-credit").textContent = `Foto: ${p.credit.author} · ${p.credit.license} · Wikimedia Commons`;
+  $("#sheet-credit").href = p.credit.source;
   $("#sheet-cat").textContent = p.category;
   $("#sheet-name").textContent = p.name;
   $("#sheet-desc").textContent = p.desc;
   $("#directions").href = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`;
   renderSheetControls();
+  $("#sheet").scrollTop = 0;
   $("#sheet").classList.add("show");
   $("#backdrop").classList.add("show");
   $("#sheet").setAttribute("aria-hidden", "false");
@@ -129,8 +184,8 @@ function closeSheet() {
 function renderSheetControls() {
   const r = state.ratings[current] || 0;
   $("#stars").innerHTML = [1, 2, 3, 4, 5]
-    .map((n) => `<button class="star ${n <= r ? "on" : ""}" data-n="${n}" aria-label="${n} estrelas">★</button>`)
-    .join("");
+    .map((n) => `<button class="star ${n <= r ? "on" : ""}" data-n="${n}" aria-label="${n} estrelas">★</button>`).join("");
+  $("#stars-hint").textContent = r ? LABELS[r] : "Toque nas estrelas para avaliar";
   const isFav = state.favorite === current;
   $("#vote").classList.toggle("voted", isFav);
   $("#vote").textContent = isFav ? "♥ Seu voto de melhor lugar" : "Votar como o melhor lugar";
@@ -154,8 +209,9 @@ $("#vote").addEventListener("click", () => {
 
 $("#backdrop").addEventListener("click", closeSheet);
 $("#close").addEventListener("click", closeSheet);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSheet(); });
 
-// Arrastar o sheet para baixo para fechar
+// Arrastar o detalhe para baixo para fechar
 let startY = null;
 $("#sheet").addEventListener("touchstart", (e) => {
   if ($("#sheet").scrollTop === 0) startY = e.touches[0].clientY;
@@ -165,9 +221,9 @@ $("#sheet").addEventListener("touchend", (e) => {
   startY = null;
 });
 
-// Clique em cards (lista, ranking, pódio)
+// Toque em cards da lista e do ranking
 document.addEventListener("click", (e) => {
-  const el = e.target.closest(".card, .pod"); if (el) openSheet(el.dataset.id);
+  const el = e.target.closest(".photo-card, .row, .pod"); if (el) openSheet(el.dataset.id);
 });
 
 // ---------- Navegação ----------
@@ -187,4 +243,5 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
 }
 
+renderFilters();
 renderAll();

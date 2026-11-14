@@ -1,0 +1,9 @@
+{
+  "name": "Roteiro São Luís",
+  "short_name": "São Luís",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "lang": "pt-BR"
+}
